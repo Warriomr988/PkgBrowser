@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PkgBrowser</string>
+    <string name="go">Ir</string>
+    <string name="downloads">Descargas</string>
+    <string name="ps4_ip_label">IP de la PS4:</string>
+    <string name="save">Guardar</string>
+    <string name="download">Descargar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="send_to_ps4">⬆ Enviar a PS4</string>
+    <string name="pause">⏸</string>
+    <string name="resume">▶</string>
+    <string name="remove">❌</string>
+    <string name="open_browser">🌐 Navegador</string>
+</resources>
