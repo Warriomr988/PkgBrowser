@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -54,6 +55,10 @@ class DownloadsActivity : Activity() {
             Toast.makeText(this, "IP de la PS4 guardada", Toast.LENGTH_SHORT).show()
         }
         findViewById<Button>(R.id.btnBrowser).setOnClickListener { finish() }
+        findViewById<Button>(R.id.btnStopBridge).setOnClickListener {
+            DownloadService.stopBridge(this)
+            refreshBridgeBanner()
+        }
     }
 
     override fun onResume() {
@@ -74,6 +79,19 @@ class DownloadsActivity : Activity() {
             adapter.notifyDataSetChanged()
         } finally {
             db.close()
+        }
+        refreshBridgeBanner()
+    }
+
+    /** Banner "🌉 Puente activo" con botón Detener (se refresca cada segundo). */
+    private fun refreshBridgeBanner() {
+        val banner = findViewById<LinearLayout>(R.id.bridgeBanner)
+        if (DownloadService.bridgeActive) {
+            banner.visibility = View.VISIBLE
+            findViewById<TextView>(R.id.bridgeBannerText).text =
+                "🌉 Puente activo: ${DownloadService.bridgeFileName ?: ""}"
+        } else {
+            banner.visibility = View.GONE
         }
     }
 
@@ -106,8 +124,15 @@ class DownloadsActivity : Activity() {
     }
 
     /**
-     * Flujo "⬆ Enviar a PS4": levanta el TinyHttpServer sirviendo el archivo
-     * en http://<ip-lan>:8080/pkg y manda la orden al RPI de GoldHEN.
+     * Flujo "⬆ Enviar a PS4": pide al [DownloadService] que levante el puente
+     * persistente sirviendo el archivo en http://<ip-lan>:8080/pkg y manda la
+     * orden al RPI de GoldHEN.
+     *
+     * El puente queda ACTIVO (con notificación) hasta que el usuario lo
+     * detenga: la PS4 tarda minutos/horas en bajar el PKG. Bug v1.0: el
+     * servidor vivía en un hilo de esta actividad y se detenía en el `finally`
+     * a los segundos del 200 OK, dejando a la PS4 sin servidor a mitad de la
+     * descarga ("No se ha podido descargar").
      */
     private fun sendToPs4(item: DownloadItem) {
         val file = File(getExternalFilesDir(null), item.fileName)
@@ -115,47 +140,53 @@ class DownloadsActivity : Activity() {
             Toast.makeText(this, "Archivo no encontrado en el teléfono", Toast.LENGTH_LONG).show()
             return
         }
+        val ip = ps4Ip()
         val dlg = AlertDialog.Builder(this)
             .setTitle("Enviando a PS4…")
-            .setMessage("Levantando servidor y contactando ${ps4Ip()}")
+            .setMessage("Levantando puente y contactando $ip")
             .setCancelable(false)
             .create()
         dlg.show()
 
         Thread {
-            val server = TinyHttpServer(8080)
             try {
-                server.fileToServe = file
-                server.start()
                 val lanIp = NetUtils.getLanIp()
                     ?: throw IllegalStateException("No se encontró la IP LAN del teléfono")
+                // El puente vive en el servicio: sobrevive a esta pantalla y al
+                // diálogo. NO se detiene aquí.
+                DownloadService.startBridge(this@DownloadsActivity, file)
                 val fileUrl = "http://$lanIp:8080/pkg"
-                val result = Ps4Sender.sendInstall(ps4Ip(), fileUrl)
+                val result = Ps4Sender.sendInstall(ip, fileUrl)
                 runOnUiThread {
                     dlg.dismiss()
                     when (result) {
                         is Ps4SendResult.Ok -> AlertDialog.Builder(this)
-                            .setTitle("PS4")
+                            .setTitle("🌉 Puente activo")
                             .setMessage(
-                                "Orden aceptada (${result.statusLine}). " +
-                                    "Revisa la PS4: debería empezar la instalación."
+                                "Orden aceptada (${result.statusLine}).\n\n" +
+                                    "Deja la app abierta hasta que la PS4 termine de " +
+                                    "descargar e instalar; luego detén el puente con ⏹."
                             )
                             .setPositiveButton(android.R.string.ok, null)
                             .show()
-                        is Ps4SendResult.Err -> AlertDialog.Builder(this)
-                            .setTitle("Error")
-                            .setMessage(result.message)
-                            .setPositiveButton(android.R.string.ok, null)
-                            .show()
+                        is Ps4SendResult.Err -> {
+                            // Sin orden aceptada no tiene sentido dejar el puente arriba.
+                            DownloadService.stopBridge(this@DownloadsActivity)
+                            AlertDialog.Builder(this)
+                                .setTitle("Error")
+                                .setMessage(result.message)
+                                .setPositiveButton(android.R.string.ok, null)
+                                .show()
+                        }
                     }
+                    refreshList()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
                     dlg.dismiss()
+                    DownloadService.stopBridge(this@DownloadsActivity)
                     Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
-            } finally {
-                server.stop()
             }
         }.start()
     }
