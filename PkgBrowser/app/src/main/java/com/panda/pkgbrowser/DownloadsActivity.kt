@@ -15,6 +15,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ProgressBar
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
@@ -22,12 +24,25 @@ import java.io.File
 /**
  * Lista de descargas (nombre, tamaño, progreso, estado) con ⏸/▶/❌ y,
  * por cada descarga completa, el botón "⬆ Enviar a PS4".
- * Arriba: campo de IP de la PS4, recordada en SharedPreferences.
+ * Arriba: campo de IP de la PS4, instalador (NovapsRPI :12801 / RPI
+ * Flatz :12800) y modo de envío (enlace directo / puente :8080),
+ * recordados en SharedPreferences.
  */
 class DownloadsActivity : Activity() {
 
+    companion object {
+        /** Puerto por defecto: NovapsRPI escucha en 12801 (flatz usa 12800). */
+        const val DEFAULT_INSTALLER_PORT = 12801
+        const val MODE_DIRECT = "direct"
+        const val MODE_BRIDGE = "bridge"
+    }
+
     private lateinit var listView: ListView
     private lateinit var ps4IpEdit: EditText
+    private lateinit var rbNovaps: RadioButton
+    private lateinit var rbFlatz: RadioButton
+    private lateinit var rbDirect: RadioButton
+    private lateinit var rbBridge: RadioButton
     private val adapter = DownloadAdapter()
     private val handler = Handler(Looper.getMainLooper())
     private val refreshRunnable = object : Runnable {
@@ -44,14 +59,24 @@ class DownloadsActivity : Activity() {
 
         listView = findViewById(R.id.downloadList)
         ps4IpEdit = findViewById(R.id.ps4Ip)
+        rbNovaps = findViewById(R.id.rbNovaps)
+        rbFlatz = findViewById(R.id.rbFlatz)
+        rbDirect = findViewById(R.id.rbDirect)
+        rbBridge = findViewById(R.id.rbBridge)
         listView.adapter = adapter
 
         val prefs = getSharedPreferences("pkgbrowser", Context.MODE_PRIVATE)
         ps4IpEdit.setText(prefs.getString("ps4_ip", "192.168.1.88"))
+        restoreInstallerUi(prefs.getInt("installer_port", DEFAULT_INSTALLER_PORT))
+        restoreSendModeUi(prefs.getString("send_mode", MODE_DIRECT))
 
         findViewById<Button>(R.id.btnSaveIp).setOnClickListener {
             val ip = ps4IpEdit.text.toString().trim()
-            prefs.edit().putString("ps4_ip", ip).apply()
+            prefs.edit()
+                .putString("ps4_ip", ip)
+                .putInt("installer_port", selectedInstallerPort())
+                .putString("send_mode", selectedSendMode())
+                .apply()
             Toast.makeText(this, "IP de la PS4 guardada", Toast.LENGTH_SHORT).show()
         }
         findViewById<Button>(R.id.btnBrowser).setOnClickListener { finish() }
@@ -100,6 +125,30 @@ class DownloadsActivity : Activity() {
         return t.ifEmpty { "192.168.1.88" }
     }
 
+    /** Instalador: por defecto NovapsRPI (:12801). */
+    private fun installerPort(): Int {
+        val prefs = getSharedPreferences("pkgbrowser", Context.MODE_PRIVATE)
+        return prefs.getInt("installer_port", DEFAULT_INSTALLER_PORT)
+    }
+
+    /** Modo de envío: "direct" (enlace directo) o "bridge" (puente :8080). */
+    private fun sendMode(): String {
+        val prefs = getSharedPreferences("pkgbrowser", Context.MODE_PRIVATE)
+        return prefs.getString("send_mode", MODE_DIRECT) ?: MODE_DIRECT
+    }
+
+    private fun restoreInstallerUi(port: Int) {
+        if (port == 12800) rbFlatz.isChecked = true else rbNovaps.isChecked = true
+    }
+
+    private fun restoreSendModeUi(mode: String?) {
+        if (mode == MODE_BRIDGE) rbBridge.isChecked = true else rbDirect.isChecked = true
+    }
+
+    private fun selectedInstallerPort(): Int = if (rbFlatz.isChecked) 12800 else 12801
+
+    private fun selectedSendMode(): String = if (rbBridge.isChecked) MODE_BRIDGE else MODE_DIRECT
+
     private fun stateText(item: DownloadItem): String {
         return when (item.state) {
             DownloadState.QUEUED -> "En cola"
@@ -124,9 +173,16 @@ class DownloadsActivity : Activity() {
     }
 
     /**
-     * Flujo "⬆ Enviar a PS4": pide al [DownloadService] que levante el puente
-     * persistente sirviendo el archivo en http://<ip-lan>:8080/pkg y manda la
-     * orden al RPI de GoldHEN.
+     * Flujo "⬆ Enviar a PS4", según el modo de envío elegido:
+     *
+     * - **🔗 Enlace directo (por defecto)**: manda a la PS4 el [DownloadItem.url]
+     *   original tal cual — la consola descarga el PKG de internet por BGFT e
+     *   instala en segundo plano. NO necesita que el archivo esté en el
+     *   teléfono: ese es el punto. Puerto según el instalador (NovapsRPI 12801
+     *   / RPI Flatz 12800).
+     * - **🌉 Puente :8080**: flujo clásico — pide al [DownloadService] que
+     *   levante el puente persistente sirviendo el archivo en
+     *   http://<ip-lan>:8080/pkg y manda la orden al RPI.
      *
      * El puente queda ACTIVO (con notificación) hasta que el usuario lo
      * detenga: la PS4 tarda minutos/horas en bajar el PKG. Bug v1.0: el
@@ -135,15 +191,73 @@ class DownloadsActivity : Activity() {
      * descarga ("No se ha podido descargar").
      */
     private fun sendToPs4(item: DownloadItem) {
+        if (sendMode() == MODE_DIRECT) {
+            sendDirectLinkToPs4(item)
+        } else {
+            sendViaBridgeToPs4(item)
+        }
+    }
+
+    /**
+     * Modo directo: envía el enlace de descarga a la PS4 sin pedir el archivo
+     * en el teléfono. NovapsRPI crea la tarea BGFT y lo baja de internet.
+     */
+    private fun sendDirectLinkToPs4(item: DownloadItem) {
+        if (!item.url.startsWith("http", ignoreCase = true)) {
+            Toast.makeText(this, "El enlace de la descarga no es una URL http(s)", Toast.LENGTH_LONG).show()
+            return
+        }
+        val ip = ps4Ip()
+        val port = installerPort()
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("Enviando orden a la PS4…")
+            .setMessage("Contactando $ip:$port")
+            .setCancelable(false)
+            .create()
+        dlg.show()
+
+        Thread {
+            val result = Ps4Sender.sendInstall(ip, port, item.url)
+            runOnUiThread {
+                dlg.dismiss()
+                when (result) {
+                    is Ps4SendResult.Ok -> AlertDialog.Builder(this)
+                        .setTitle("✅ Orden aceptada")
+                        .setMessage(
+                            "La PS4 descargará e instalará directamente de internet " +
+                                "en segundo plano. Puedes cerrar la app."
+                        )
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                    is Ps4SendResult.Err -> AlertDialog.Builder(this)
+                        .setTitle("Error")
+                        .setMessage(
+                            result.message + "\n\n" +
+                                "Si el enlace exige sesión (cookies/login), reintenta " +
+                                "en modo 🌉 Puente."
+                        )
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * Modo puente: el teléfono sirve el archivo descargado por :8080 y la
+     * PS4 lo baja de ahí.
+     */
+    private fun sendViaBridgeToPs4(item: DownloadItem) {
         val file = File(getExternalFilesDir(null), item.fileName)
         if (!file.exists()) {
             Toast.makeText(this, "Archivo no encontrado en el teléfono", Toast.LENGTH_LONG).show()
             return
         }
         val ip = ps4Ip()
+        val port = installerPort()
         val dlg = AlertDialog.Builder(this)
             .setTitle("Enviando a PS4…")
-            .setMessage("Levantando puente y contactando $ip")
+            .setMessage("Levantando puente y contactando $ip:$port")
             .setCancelable(false)
             .create()
         dlg.show()
@@ -156,7 +270,7 @@ class DownloadsActivity : Activity() {
                 // diálogo. NO se detiene aquí.
                 DownloadService.startBridge(this@DownloadsActivity, file)
                 val fileUrl = "http://$lanIp:8080/pkg"
-                val result = Ps4Sender.sendInstall(ip, fileUrl)
+                val result = Ps4Sender.sendInstall(ip, port, fileUrl)
                 runOnUiThread {
                     dlg.dismiss()
                     when (result) {

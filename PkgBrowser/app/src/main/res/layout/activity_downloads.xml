@@ -32,6 +32,58 @@
             android:text="@string/save" />
     </LinearLayout>
 
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Instalador:"
+        android:paddingTop="4dp" />
+
+    <RadioGroup
+        android:id="@+id/installerGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <RadioButton
+            android:id="@+id/rbNovaps"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:text="NovapsRPI :12801" />
+
+        <RadioButton
+            android:id="@+id/rbFlatz"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:text="RPI Flatz :12800" />
+    </RadioGroup>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Modo de envío:"
+        android:paddingTop="4dp" />
+
+    <RadioGroup
+        android:id="@+id/sendModeGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <RadioButton
+            android:id="@+id/rbDirect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔗 Enlace directo (la PS4 descarga de internet)" />
+
+        <RadioButton
+            android:id="@+id/rbBridge"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🌉 Puente :8080 (el teléfono sirve el archivo)" />
+    </RadioGroup>
+
     <LinearLayout
         android:id="@+id/bridgeBanner"
         android:layout_width="match_parent"
