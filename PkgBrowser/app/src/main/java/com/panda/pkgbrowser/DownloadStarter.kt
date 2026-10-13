@@ -2,6 +2,7 @@ package com.panda.pkgbrowser
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.webkit.CookieManager
 import android.widget.EditText
 import android.widget.Toast
@@ -184,7 +185,56 @@ object DownloadStarter {
                 enqueueDownload(activity, url, name, probe)
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton("⬆ Enviar a PS4") { _, _ -> sendDirectToPs4(activity, url) }
             .show()
+    }
+
+    /**
+     * v1.4.1: manda el enlace directo al NovapsRPI de la PS4 (:12801 por
+     * defecto) sin descargar nada al teléfono. La PS4 crea la tarea BGFT y
+     * descarga el PKG de internet en segundo plano.
+     */
+    private fun sendDirectToPs4(activity: Activity, url: String) {
+        if (!url.startsWith("http")) {
+            Toast.makeText(activity, "Enlace no válido", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val prefs = activity.getSharedPreferences("pkgbrowser", Context.MODE_PRIVATE)
+        val ip = prefs.getString("ps4_ip", "192.168.1.88").orEmpty()
+            .ifBlank { "192.168.1.88" }
+        val port = prefs.getInt("installer_port", 12801)
+        val dlg = AlertDialog.Builder(activity)
+            .setTitle("Enviando orden a la PS4…")
+            .setMessage("Enviando enlace a $ip:$port")
+            .setCancelable(false)
+            .create()
+        dlg.show()
+        Thread {
+            val res = Ps4Sender.sendInstall(ip, port, url)
+            activity.runOnUiThread {
+                if (activity.isFinishing) return@runOnUiThread
+                dlg.dismiss()
+                when (res) {
+                    is Ps4SendResult.Ok -> AlertDialog.Builder(activity)
+                        .setTitle("✅ Orden aceptada")
+                        .setMessage(
+                            "La PS4 descargará e instalará directamente de " +
+                                "internet en segundo plano. Puedes cerrar la app."
+                        )
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                    is Ps4SendResult.Err -> AlertDialog.Builder(activity)
+                        .setTitle("Error")
+                        .setMessage(
+                            res.message + "\n\nSi el enlace exige sesión " +
+                                "(cookies/login), usa ACEPTAR para bajarlo al " +
+                                "teléfono y luego el modo 🌉 Puente."
+                        )
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
+            }
+        }.start()
     }
 
     private fun enqueueDownload(activity: Activity, url: String, fileName: String, probe: ProbeResult.Ok) {

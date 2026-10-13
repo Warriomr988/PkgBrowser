@@ -38,6 +38,11 @@ Gestor de descargas estilo IDM con navegador dentro, adaptado a PS4 con jailbrea
   segundo plano, sin que el teléfono descargue nada. En modo
   **🌉 Puente :8080** el flujo clásico sigue igual (el teléfono sirve el
   archivo), pero la orden va al puerto del instalador elegido.
+- **⬆ Enviar a PS4 en el diálogo de descarga (v1.4.1)**: el diálogo "Descargar
+  archivo" del navegador trae un tercer botón `⬆ Enviar a PS4` que manda el
+  enlace directo al NovapsRPI (`:12801` por defecto) sin bajar nada al
+  teléfono; si el enlace exige sesión, el error sugiere bajarlo con ACEPTAR y
+  usar el modo 🌉 Puente.
 
 ## Compilar (GitHub Actions)
 
